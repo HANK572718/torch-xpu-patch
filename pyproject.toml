@@ -1,0 +1,26 @@
+[tool.poetry]
+name = "torch-xpu-patch"
+version = "1.0.0"
+description = "Intel XPU (Arc GPU) 通用 Torch Monkey Patch — 讓任何使用 CUDA 的 torch 專案無縫切換至 Intel XPU"
+authors = ["Hank"]
+packages = [{ include = "torch_xpu_patch", from = "src" }]
+
+[tool.poetry.scripts]
+# 一次性安裝工具：將 usercustomize.py 注入到 venv，讓後續 python 啟動自動套用補丁
+xpu-patch-install = "torch_xpu_patch.cli:install_usercustomize"
+xpu-patch-uninstall = "torch_xpu_patch.cli:uninstall_usercustomize"
+xpu-patch-status = "torch_xpu_patch.cli:show_status"
+xpu-patch-verify = "torch_xpu_patch.cli:verify"
+
+[tool.poetry.dependencies]
+python = ">=3.11,<3.13"
+
+[tool.poetry.group.torch.dependencies]
+torch = { url = "https://download.pytorch.org/whl/xpu/torch-2.9.0%2Bxpu-cp311-cp311-win_amd64.whl#sha256=d56c44ab4818aba57e5c7b628f422d014e0d507427170a771c5be85e308b0bc6" }
+torchaudio = { url = "https://download.pytorch.org/whl/xpu/torchaudio-2.9.0%2Bxpu-cp311-cp311-win_amd64.whl#sha256=431334d35c70608a83582f6397135bcfd49d69d1764644a273fbcdabd22a346f" }
+torchvision = { url = "https://download.pytorch.org/whl/xpu/torchvision-0.24.0%2Bxpu-cp311-cp311-win_amd64.whl#sha256=9bb0d1421c544ac8e2eca5b47daacaf54706dc9139c003aa5e77ee5f355c5931" }
+pytorch-triton-xpu = { url = "https://download.pytorch.org/whl/pytorch_triton_xpu-3.5.0-cp311-cp311-win_amd64.whl#sha256=debf75348da8e8c7166b4d4a9b91d1508bb8d6581e339f79f7604b2e6746bacd" }
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
