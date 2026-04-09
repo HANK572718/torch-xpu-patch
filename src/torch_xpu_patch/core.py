@@ -286,22 +286,25 @@ def _patch_nn_module(torch: Any, xpu_available: bool) -> None:
 def _patch_device_string(torch: Any, xpu_available: bool) -> None:
     """讓 torch.device('cuda') 自動變成 torch.device('xpu')。
 
-    使用包裝 factory 的方式，不修改 C++ 層的 torch.device 類別。
+    torch.device 是 C++ binding，無法繼承。
+    改用 callable 工廠函式包裝：呼叫 torch.device('cuda') 時自動改寫參數，
+    回傳的仍是原生 torch.device，不影響 isinstance 判斷。
     """
     if not xpu_available:
         return
 
     OriginalDevice = torch.device
 
-    class _XpuDevice(OriginalDevice):
-        """包裝 torch.device，自動把 cuda 重寫為 xpu。"""
-        def __new__(cls, *args, **kwargs):
-            args = _rewrite_device_args(args)
-            return OriginalDevice(*args, **kwargs)
+    def _xpu_device_factory(*args, **kwargs):
+        """工廠函式：把 'cuda' / 'cuda:N' 改寫為 'xpu' / 'xpu:N' 再建立 device。
+        回傳值仍是原生 torch.device 實例，isinstance(x, OriginalDevice) 不受影響。
+        """
+        args = _rewrite_device_args(args)
+        if "device" in kwargs:
+            kwargs["device"] = _rewrite_device(kwargs["device"])
+        return OriginalDevice(*args, **kwargs)
 
-    # 注意：torch.device 是 C++ binding，直接替換可能影響 isinstance 判斷
-    # 因此只 patch torch.device 工廠，不影響現有的 isinstance(x, torch.device) 判斷
-    _save_and_set(torch, "device", _XpuDevice, "torch.device")
+    _save_and_set(torch, "device", _xpu_device_factory, "torch.device")
 
     logger.debug("[patch] torch.device('cuda*') → torch.device('xpu*') 已套用")
 
