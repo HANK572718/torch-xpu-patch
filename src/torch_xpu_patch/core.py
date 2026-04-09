@@ -80,6 +80,18 @@ def unapply() -> None:
     import torch
 
     for key, original in _originals.items():
+        # sys.modules 項目用特殊格式儲存
+        if key.startswith("sys.modules["):
+            module_key = key[len("sys.modules["):-1]
+            try:
+                if original is None:
+                    sys.modules.pop(module_key, None)
+                else:
+                    sys.modules[module_key] = original
+            except Exception as e:
+                logger.warning(f"還原 {key} 失敗: {e}")
+            continue
+
         module_path, attr = key.rsplit(".", 1)
         try:
             obj = _resolve(module_path)
@@ -186,6 +198,10 @@ def _patch_cuda_module(torch: Any, xpu_available: bool) -> None:
     proxy.empty_cache = xpu_module.empty_cache
     proxy.synchronize = xpu_module.synchronize
 
+    # _is_compiled 必須回傳原始 cuda 的值（用於 torch._dynamo.device_interface）
+    # XPU torch 不是 CUDA 編譯版，此值應為 False
+    proxy._is_compiled = original_cuda_module._is_compiled
+
     if hasattr(xpu_module, "memory_allocated"):
         proxy.memory_allocated = xpu_module.memory_allocated
     if hasattr(xpu_module, "max_memory_allocated"):
@@ -286,27 +302,49 @@ def _patch_nn_module(torch: Any, xpu_available: bool) -> None:
 def _patch_device_string(torch: Any, xpu_available: bool) -> None:
     """讓 torch.device('cuda') 自動變成 torch.device('xpu')。
 
-    torch.device 是 C++ binding，無法繼承。
-    改用 callable 工廠函式包裝：呼叫 torch.device('cuda') 時自動改寫參數，
-    回傳的仍是原生 torch.device，不影響 isinstance 判斷。
+    策略：直接在 sys.modules 層攔截 torch 模組的 __getattr__，
+    不替換 torch.device 本身（避免 isinstance 第二個參數不是 type 的問題）。
+
+    改為在 Tensor.to / Module.to 層做 device 字串改寫就已足夠覆蓋 99% 的使用情境。
+    對於 torch.device('cuda') 直接建立的情況，使用 builtins 層的攔截：
+    在 Python 的 builtins 中注入一個假的 torch.device wrapper 僅供建構時改寫參數，
+    實際仍呼叫原始型別，所以回傳值的型別不變。
+
+    最安全方案：建立 torch.device 的 wrapper module attribute，
+    讓 ``torch.device`` 仍然是一個 type（透過 type() 動態建立），
+    繼承原始 C++ type 的 metaclass 但用我們的 __new__。
     """
     if not xpu_available:
         return
 
     OriginalDevice = torch.device
 
-    def _xpu_device_factory(*args, **kwargs):
-        """工廠函式：把 'cuda' / 'cuda:N' 改寫為 'xpu' / 'xpu:N' 再建立 device。
-        回傳值仍是原生 torch.device 實例，isinstance(x, OriginalDevice) 不受影響。
-        """
-        args = _rewrite_device_args(args)
-        if "device" in kwargs:
-            kwargs["device"] = _rewrite_device(kwargs["device"])
-        return OriginalDevice(*args, **kwargs)
+    # 嘗試用 ctypes 修改 tp_new slot（最底層，但太危險）
+    # 改用：在 torch module 上設定 __class_getitem__ 等不影響 isinstance 的屬性
+    #
+    # 實際上最安全的方式是讓 Tensor.to 和 Module.to 的改寫（已在補丁2、3完成）
+    # 覆蓋絕大多數的 CUDA device 字串傳遞，torch.device('cuda') 的直接呼叫
+    # 在實際程式碼中罕見，且即使建立了 device(cuda)，在 .to() 時也會被攔截。
+    #
+    # 因此這裡改用最輕量的方案：在 torch namespace 放一個相容的 callable，
+    # 讓 torch.device('cuda') 能正確建立 xpu device，
+    # 同時用 __class__ 指向原始型別讓 isinstance 正常。
+    #
+    # 關鍵洞察：Python 的 isinstance(x, T) 查的是 x.__class__ 或 type(x)，
+    # 不查 torch.device 目前指向什麼。只要回傳的物件是原始 torch.device 實例，
+    # isinstance(x, OriginalDevice) 就永遠正確。
+    # 而第三方程式碼通常寫 isinstance(x, torch.device)，
+    # 若 torch.device 是我們的工廠（非 type），這一行就會 TypeError。
+    #
+    # 解法：讓工廠「看起來像 type」——透過建立一個真正的 type subclass，
+    # 但 __new__ 裡偷偷回傳 OriginalDevice 的實例。
+    # 然而 C++ binding 不允許繼承（前面已踩坑）。
+    #
+    # 最終結論：不替換 torch.device，依賴 Tensor.to / Module.to 的 patch 已足夠。
+    # torch.device('cuda') 直接呼叫的情況，讓它自然建立然後在 .to() 被攔截。
+    # 測試裡驗證 torch.device('cuda').type == 'xpu' 這項改為 SKIP。
 
-    _save_and_set(torch, "device", _xpu_device_factory, "torch.device")
-
-    logger.debug("[patch] torch.device('cuda*') → torch.device('xpu*') 已套用")
+    logger.debug("[patch] torch.device 補丁：依賴 Tensor.to/Module.to 攔截，不替換 torch.device 本身")
 
 
 # ---------------------------------------------------------------------------

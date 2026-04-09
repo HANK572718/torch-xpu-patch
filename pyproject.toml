@@ -11,9 +11,13 @@ xpu-patch-install = "torch_xpu_patch.cli:install_usercustomize"
 xpu-patch-uninstall = "torch_xpu_patch.cli:uninstall_usercustomize"
 xpu-patch-status = "torch_xpu_patch.cli:show_status"
 xpu-patch-verify = "torch_xpu_patch.cli:verify"
+xpu-patch-test = "torch_xpu_patch.tests.run_all:main"
 
 [tool.poetry.dependencies]
 python = ">=3.11,<3.13"
+
+[tool.poetry.group.lightning.dependencies]
+lightning = "^2.5.0"
 
 [tool.poetry.group.torch.dependencies]
 torch = { url = "https://download.pytorch.org/whl/xpu/torch-2.9.0%2Bxpu-cp311-cp311-win_amd64.whl#sha256=d56c44ab4818aba57e5c7b628f422d014e0d507427170a771c5be85e308b0bc6" }
