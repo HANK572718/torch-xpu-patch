@@ -45,10 +45,10 @@ pytorch-triton-xpu = { url = "https://download.pytorch.org/whl/pytorch_triton_xp
 
 ```bash
 # pip
-pip install git+https://github.com/Hank_nhpc2/torch-xpu-patch.git
+pip install git+https://github.com/HANK572718/torch-xpu-patch.git
 
 # Poetry
-poetry add git+https://github.com/Hank_nhpc2/torch-xpu-patch.git
+poetry add git+https://github.com/HANK572718/torch-xpu-patch.git
 ```
 
 ### 從本地路徑安裝

@@ -2,11 +2,11 @@
 name = "torch-xpu-patch"
 version = "1.0.0"
 description = "Intel XPU (Arc GPU) 通用 Torch Monkey Patch — 讓任何使用 CUDA 的 torch 專案無縫切換至 Intel XPU"
-authors = ["Hank <Hank_nhpc2@users.noreply.github.com>"]
+authors = ["Hank <HANK572718@users.noreply.github.com>"]
 license = "Apache-2.0"
 readme = "README.md"
-homepage = "https://github.com/Hank_nhpc2/torch-xpu-patch"
-repository = "https://github.com/Hank_nhpc2/torch-xpu-patch"
+homepage = "https://github.com/HANK572718/torch-xpu-patch"
+repository = "https://github.com/HANK572718/torch-xpu-patch"
 keywords = ["intel", "xpu", "arc", "gpu", "torch", "pytorch", "lightning", "patch"]
 classifiers = [
     "Development Status :: 4 - Beta",
