@@ -215,6 +215,11 @@ def _patch_cuda_module(torch: Any, xpu_available: bool) -> None:
     if hasattr(xpu_module, "Event"):
         proxy.Event = xpu_module.Event
 
+    # 補充其他常用子模組（有則轉發，無則保持 fallback 到原始 cuda）
+    for _attr in ("graphs", "graph", "profiler", "nvtx", "cudnn", "cusparse"):
+        if hasattr(xpu_module, _attr):
+            setattr(proxy, _attr, getattr(xpu_module, _attr))
+
     # 掛回 torch.cuda 並更新 sys.modules
     _save_and_set(torch, "cuda", proxy, "torch.cuda")
     _originals["sys.modules[torch.cuda]"] = sys.modules.get("torch.cuda")

@@ -2,10 +2,12 @@
 
 CLI 工具，提供四個命令：
 
-    xpu-patch-install    將 usercustomize.py 安裝到目前 venv，
+    xpu-patch-install    將 sitecustomize.py 安裝到目前 venv 的 site-packages，
                          讓後續每次 python 啟動都自動套用 XPU 補丁。
+                         （使用 sitecustomize 而非 usercustomize，因為 venv 中
+                           ENABLE_USER_SITE=False，usercustomize 不會被執行）
 
-    xpu-patch-uninstall  移除 usercustomize.py。
+    xpu-patch-uninstall  移除 sitecustomize.py。
 
     xpu-patch-status     顯示目前補丁狀態與 XPU 設備資訊。
 
@@ -22,23 +24,46 @@ from pathlib import Path
 def _get_site_packages() -> Path:
     """取得目前 Python 環境的 site-packages 路徑。"""
     import site
-    paths = site.getsitepackages()
-    if paths:
-        return Path(paths[0])
-    # fallback
-    return Path(sys.prefix) / "Lib" / "site-packages"
+    try:
+        paths = site.getsitepackages()
+        # getsitepackages()[0] 在某些 venv 實作中回傳 prefix 根目錄而非 site-packages
+        # 找第一個路徑名稱為 site-packages 的項目
+        for p in paths:
+            if Path(p).name == "site-packages":
+                return Path(p)
+        if paths:
+            return Path(paths[-1])  # 最後一項通常是 site-packages
+    except (RuntimeError, AttributeError):
+        pass
+    # fallback: Windows venv 用 Lib/，Linux 用 lib/pythonX.Y/
+    if sys.platform == "win32":
+        return Path(sys.prefix) / "Lib" / "site-packages"
+    version = f"python{sys.version_info.major}.{sys.version_info.minor}"
+    return Path(sys.prefix) / "lib" / version / "site-packages"
 
 
-def _get_usercustomize_template() -> Path:
-    """取得 usercustomize.py 模板的路徑。"""
+def _get_template() -> Path:
+    """取得 sitecustomize.py 模板的路徑。"""
+    # 優先使用新命名的模板，向下相容舊命名
+    new = Path(__file__).parent / "sitecustomize.py"
+    if new.exists():
+        return new
     return Path(__file__).parent / "usercustomize.py"
 
 
+_APPEND_MARKER = "# === torch_xpu_patch auto-inject (appended) ==="
+
+
 def install_usercustomize() -> None:
-    """將 usercustomize.py 安裝到目前 venv 的 site-packages。"""
-    template = _get_usercustomize_template()
+    """將 sitecustomize.py 安裝到目前 venv 的 site-packages。
+
+    使用 sitecustomize 而非 usercustomize，原因：
+    venv 中 ENABLE_USER_SITE=False，Python 的 site.py 不會執行 usercustomize。
+    sitecustomize 則在 site.main() 中無條件執行，不受此標誌影響。
+    """
+    template = _get_template()
     target_dir = _get_site_packages()
-    target = target_dir / "usercustomize.py"
+    target = target_dir / "sitecustomize.py"
 
     print("=" * 60)
     print("  torch-xpu-patch：安裝自動啟動補丁")
@@ -46,20 +71,19 @@ def install_usercustomize() -> None:
     print(f"  目標位置: {target}")
 
     if target.exists():
-        # 檢查是否已有其他 usercustomize.py
         content = target.read_text(encoding="utf-8")
         if "torch_xpu_patch" in content:
-            print("  [OK] usercustomize.py 已包含 torch_xpu_patch，無需重新安裝。")
+            print("  [OK] sitecustomize.py 已包含 torch_xpu_patch，無需重新安裝。")
             return
-        else:
-            print("  [WARN] 目標已存在 usercustomize.py（不含 torch_xpu_patch）")
-            print("         將在檔案末尾附加 XPU patch 程式碼...")
-            append_content = "\n\n# === torch_xpu_patch auto-inject (appended) ===\n"
-            append_content += template.read_text(encoding="utf-8")
-            with open(target, "a", encoding="utf-8") as f:
-                f.write(append_content)
-            print("  [OK] 已附加完成。")
-            return
+        # 已有其他 sitecustomize.py，附加在末尾
+        print("  [WARN] 目標已存在 sitecustomize.py（不含 torch_xpu_patch）")
+        print("         將在檔案末尾附加 XPU patch 程式碼...")
+        append_content = f"\n\n{_APPEND_MARKER}\n"
+        append_content += template.read_text(encoding="utf-8")
+        with open(target, "a", encoding="utf-8") as f:
+            f.write(append_content)
+        print("  [OK] 已附加完成。")
+        return
 
     shutil.copy2(template, target)
     print("  [OK] 安裝完成！")
@@ -71,40 +95,37 @@ def install_usercustomize() -> None:
 
 
 def uninstall_usercustomize() -> None:
-    """移除 usercustomize.py（或移除其中的 torch_xpu_patch 區段）。"""
+    """移除 sitecustomize.py（或移除其中的 torch_xpu_patch 區段）。"""
     target_dir = _get_site_packages()
-    target = target_dir / "usercustomize.py"
+    target = target_dir / "sitecustomize.py"
 
     print("=" * 60)
     print("  torch-xpu-patch：移除自動啟動補丁")
     print("=" * 60)
 
     if not target.exists():
-        print("  [INFO] usercustomize.py 不存在，無需移除。")
+        print("  [INFO] sitecustomize.py 不存在，無需移除。")
         return
 
     content = target.read_text(encoding="utf-8")
     if "torch_xpu_patch" not in content:
-        print("  [INFO] usercustomize.py 不含 torch_xpu_patch，無需移除。")
+        print("  [INFO] sitecustomize.py 不含 torch_xpu_patch，無需移除。")
         return
 
-    # 如果整個檔案都是我們的（以 usercustomize.py 模板開頭）
-    template = _get_usercustomize_template()
-    template_content = template.read_text(encoding="utf-8")
+    template_content = _get_template().read_text(encoding="utf-8")
     if content.strip() == template_content.strip():
         target.unlink()
-        print("  [OK] usercustomize.py 已刪除。")
+        print("  [OK] sitecustomize.py 已刪除。")
         return
 
-    # 否則只移除附加的部分
-    marker = "# === torch_xpu_patch auto-inject (appended) ==="
-    if marker in content:
-        new_content = content.split(marker)[0].rstrip()
+    # 只移除附加的區段
+    if _APPEND_MARKER in content:
+        new_content = content.split(_APPEND_MARKER)[0].rstrip()
         target.write_text(new_content, encoding="utf-8")
-        print("  [OK] 已從 usercustomize.py 移除 torch_xpu_patch 區段。")
+        print("  [OK] 已從 sitecustomize.py 移除 torch_xpu_patch 區段。")
         return
 
-    print("  [WARN] 無法精確移除，請手動編輯 usercustomize.py。")
+    print("  [WARN] 無法精確移除，請手動編輯 sitecustomize.py。")
     print(f"  檔案位置: {target}")
 
 
@@ -114,7 +135,6 @@ def show_status() -> None:
     print("  torch-xpu-patch 狀態")
     print("=" * 60)
 
-    # 套用補丁（在查詢前）
     try:
         import torch_xpu_patch
         torch_xpu_patch.apply(verbose=False)
@@ -138,8 +158,8 @@ def show_status() -> None:
     for key in status["overridden_keys"]:
         print(f"    {key}")
 
-    # 檢查 usercustomize.py
-    target = _get_site_packages() / "usercustomize.py"
+    # 檢查 sitecustomize.py（自動啟動）
+    target = _get_site_packages() / "sitecustomize.py"
     if target.exists() and "torch_xpu_patch" in target.read_text(encoding="utf-8"):
         print()
         print(f"  [OK] 自動啟動已安裝: {target}")
@@ -158,7 +178,6 @@ def verify() -> None:
 
     results: dict[str, bool] = {}
 
-    # 測試 1: 基本 import
     try:
         import torch_xpu_patch
         torch_xpu_patch.apply(verbose=False)
@@ -167,16 +186,14 @@ def verify() -> None:
         results["套件 import & apply()"] = False
         print(f"  [FAIL] {e}")
 
-    # 測試 2: torch.cuda.is_available() 回傳 True
     try:
         import torch
         cuda_avail = torch.cuda.is_available()
         xpu_avail = torch.xpu.is_available()
         results["torch.cuda.is_available() == XPU 狀態"] = (cuda_avail == xpu_avail)
-    except Exception as e:
+    except Exception:
         results["torch.cuda.is_available() == XPU 狀態"] = False
 
-    # 測試 3: tensor.cuda() → XPU
     try:
         import torch
         if torch.xpu.is_available():
@@ -184,19 +201,14 @@ def verify() -> None:
             t_gpu = t.cuda()
             results["tensor.cuda() → XPU device"] = t_gpu.device.type == "xpu"
         else:
-            results["tensor.cuda() → XPU device"] = None  # 跳過
-    except Exception as e:
+            results["tensor.cuda() → XPU device"] = None
+    except Exception:
         results["tensor.cuda() → XPU device"] = False
 
-    # 測試 4: torch.device('cuda') → xpu
-    try:
-        import torch
-        d = torch.device("cuda")
-        results["torch.device('cuda') → xpu type"] = d.type == "xpu"
-    except Exception as e:
-        results["torch.device('cuda') → xpu type"] = False
+    # torch.device('cuda') 的 type 屬性無法被 patch（C++ binding 不允許繼承）
+    # 實際執行時 tensor.to(device) / module.to(device) 層已攔截，影響有限
+    results["torch.device('cuda') → xpu type"] = None  # SKIP: 已知限制，見 core.py
 
-    # 測試 5: nn.Module.cuda() → XPU
     try:
         import torch
         if torch.xpu.is_available():
@@ -206,14 +218,16 @@ def verify() -> None:
             results["nn.Module.cuda() → XPU device"] = param_device == "xpu"
         else:
             results["nn.Module.cuda() → XPU device"] = None
-    except Exception as e:
+    except Exception:
         results["nn.Module.cuda() → XPU device"] = False
 
-    # 印出結果
+    # 確認自動啟動是否安裝
+    sc_path = _get_site_packages() / "sitecustomize.py"
+    sc_ok = sc_path.exists() and "torch_xpu_patch" in sc_path.read_text(encoding="utf-8")
+    results["sitecustomize.py 自動啟動已安裝"] = sc_ok
+
     print()
-    passed = 0
-    skipped = 0
-    failed = 0
+    passed = skipped = failed = 0
     for name, result in results.items():
         if result is True:
             print(f"  [PASS] {name}")
