@@ -22,11 +22,17 @@ from pathlib import Path
 def _get_site_packages() -> Path:
     """取得目前 Python 環境的 site-packages 路徑。"""
     import site
-    paths = site.getsitepackages()
-    if paths:
-        return Path(paths[0])
-    # fallback
-    return Path(sys.prefix) / "Lib" / "site-packages"
+    try:
+        paths = site.getsitepackages()
+        if paths:
+            return Path(paths[0])
+    except (RuntimeError, AttributeError):
+        pass
+    # fallback: Windows venv 用 Lib/，Linux 用 lib/pythonX.Y/
+    if sys.platform == "win32":
+        return Path(sys.prefix) / "Lib" / "site-packages"
+    version = f"python{sys.version_info.major}.{sys.version_info.minor}"
+    return Path(sys.prefix) / "lib" / version / "site-packages"
 
 
 def _get_usercustomize_template() -> Path:
