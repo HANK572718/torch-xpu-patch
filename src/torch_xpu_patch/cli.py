@@ -24,8 +24,13 @@ def _get_site_packages() -> Path:
     import site
     try:
         paths = site.getsitepackages()
+        # getsitepackages()[0] 在某些 venv 實作中回傳 prefix 根目錄而非 site-packages
+        # 找第一個路徑名稱為 site-packages 的項目
+        for p in paths:
+            if Path(p).name == "site-packages":
+                return Path(p)
         if paths:
-            return Path(paths[0])
+            return Path(paths[-1])  # 最後一項通常是 site-packages
     except (RuntimeError, AttributeError):
         pass
     # fallback: Windows venv 用 Lib/，Linux 用 lib/pythonX.Y/
